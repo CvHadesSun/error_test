@@ -70,9 +70,9 @@ def main(root_dir):
 
             img = cv2.imread(img_path)
             depth  =cv2.imread(depth_path,-1)
-            undist_img,undist_depth = undist_rgbd(dist,intr,img,depth)
-            # undist_img = img
-            # undist_depth = depth
+            # undist_img,undist_depth = undist_rgbd(dist,intr,img,depth)
+            undist_img = img
+            undist_depth = depth
 
             cv2.imwrite(f"{out_cam}/rgb.png",undist_img)
             cv2.imwrite(f"{out_cam}/depth.png",undist_depth)

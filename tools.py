@@ -6,7 +6,7 @@ import cv2
 import xml.etree.ElementTree as ET
 import os
 import json
-
+import trimesh
 
 
 def extract_matrix_data(element):
@@ -212,7 +212,7 @@ def get_depth(uv,depth_img):
     uv = uv.astype(np.int64)
 
     # 
-    size=5 // 2
+    size=3 // 2
     count = 0
     sum_d = 0
     for x in range(uv[0]-size,uv[0]+size,1):
@@ -291,3 +291,178 @@ def img2pcd(img,depth,intr,extr,output_file):
     np_pcd= np.array(pcd)
     # print(np_pcd.min(),np_pcd.max())
     save_point_cloud(pcd, output_file)
+
+def cvtcamid(ss):
+    return int(ss[3:])
+
+def load_multi_cams(cam_dir):
+    all_cams = os.listdir(cam_dir)
+    cam_ids=[]
+    cams={}
+    for item in all_cams:
+        if '.xml' in item:
+            s = item.split('-')
+            cam0 = s[0].split('(')[0]
+            cam1 = s[1].split('(')[0]
+            cam_ids.append(cam0)
+            cam_ids.append(cam1)
+            # left,right,rot,t  = load_camera(f"{cam_dir}/{item}")
+            cams[f"{cam0}_{cam1}"] = load_camera(f"{cam_dir}/{item}")
+    # 
+    cam_ids = sorted(list(set(cam_ids)),key=cvtcamid)
+    num_cam = len(cam_ids)
+
+    cam_intr={}
+    cam_extr={}
+    cam_extr["Cam0"]=np.eye(4)
+    cam_extr["Cam1"]=np.eye(4)
+ 
+    # 0->5
+    for i in range(2,6):
+        cam0 = f"Cam{i-1}"
+        cam1 = f"Cam{i}"
+        left,right,rot,t = cams[f"{cam0}_{cam1}"]
+
+        t = np.array(t).reshape(-1)
+        T = np.eye(4)
+        T[:3,:3] = np.array(rot).reshape(3,3)
+        T[:3,3] = t*1e-3
+        cam_extr[f"{cam1}"] = T @ cam_extr[f"{cam0}"]
+
+        if cam0 not in cam_intr.keys():
+            cam_intr[cam0] = {
+                    'intr' : left["Intrinsic"],
+                    "dist": left["Distortion"]
+                }
+        if cam1 not in cam_intr.keys():
+
+            cam_intr[cam1] = {
+                    'intr' : right["Intrinsic"],
+                    "dist": right["Distortion"]
+                }
+
+    # 
+    cam_intr["Cam0"] = cam_intr["Cam1"]
+
+    # 0->6
+    left,right,rot,t = cams[f"Cam0_Cam6"]
+
+    t = np.array(t).reshape(-1)
+    T = np.eye(4)
+    T[:3,:3] = np.array(rot).reshape(3,3)
+    T[:3,3] = t*1e-3
+    cam_extr["Cam6"] = T
+
+    for i in range(7,12):
+        cam0 = f"Cam{i-1}"
+        cam1 = f"Cam{i}"
+        left,right,rot,t = cams[f"{cam0}_{cam1}"]
+
+        t = np.array(t).reshape(-1)
+        T = np.eye(4)
+        T[:3,:3] = np.array(rot).reshape(3,3)
+        T[:3,3] = t*1e-3
+        cam_extr[f"{cam1}"] = T @ cam_extr[f"{cam0}"]
+
+        if cam0 not in cam_intr.keys():
+            cam_intr[cam0] = {
+                    'intr' : left["Intrinsic"],
+                    "dist": left["Distortion"]
+                }
+        if cam1 not in cam_intr.keys():
+
+            cam_intr[cam1] = {
+                    'intr' : right["Intrinsic"],
+                    "dist": right["Distortion"]
+                }
+
+
+    left,right,rot,t = cams[f"Cam0_Cam12"]
+
+    t = np.array(t).reshape(-1)
+    T = np.eye(4)
+    T[:3,:3] = np.array(rot).reshape(3,3)
+    T[:3,3] = t*1e-3
+    cam_extr["Cam12"] = T
+
+    cam_intr["Cam12"] = {
+        'intr' : right["Intrinsic"],
+        "dist": right["Distortion"]
+    }
+
+    for i in range(13,14):
+        cam0 = f"Cam{i-1}"
+        cam1 = f"Cam{i}"
+        left,right,rot,t = cams[f"{cam0}_{cam1}"]
+
+        t = np.array(t).reshape(-1)
+        T = np.eye(4)
+        T[:3,:3] = np.array(rot).reshape(3,3)
+        T[:3,3] = t*1e-3
+        cam_extr[f"{cam1}"] = T @ cam_extr[f"{cam0}"]
+
+        if cam0 not in cam_intr.keys():
+            cam_intr[cam0] = {
+                    'intr' : left["Intrinsic"],
+                    "dist": left["Distortion"]
+                }
+        if cam1 not in cam_intr.keys():
+            cam_intr[cam1] = {
+                    'intr' : right["Intrinsic"],
+                    "dist": right["Distortion"]
+                }
+
+
+    return cam_intr,cam_extr
+
+
+
+def align2key(ss):
+
+    return ss.replace('-','')
+
+
+
+def get_common_frame(dir_,ignore_list=[]):
+    sub_dirs = os.listdir(dir_)
+
+    same_frames=[]
+
+    data=[]
+    for item in sub_dirs:
+        if item in ignore_list:continue
+        tmp_d = os.listdir(f"{dir_}/{item}")
+        data.append(tmp_d)
+
+    while len(same_frames)<=0:
+
+        min_list = min(data,key=len)
+        for i in range(len(min_list)):
+            value = min_list[i]
+            num_valid=0
+            for item in data:
+                if value in item:
+                    num_valid+=1
+            if num_valid == len(data):
+                same_frames.append(value)
+        data.remove(min_list)
+
+
+    return same_frames
+
+
+def export_pcd(out_path,data):
+    point_cloud = trimesh.PointCloud(data)
+    point_cloud.export(out_path)
+    
+
+
+def compute_error_2_cam(xyz0,xyz1):
+
+    delta_d = np.abs(xyz0-xyz1)
+
+    n_dd = np.where(delta_d<=0.05,delta_d,0.0)
+
+    diff_01 = n_dd.mean(1).mean()
+
+    return  diff_01
